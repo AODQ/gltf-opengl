@@ -1,0 +1,14 @@
+.dub
+docs.json
+__dummy.html
+docs/
+libgltf2-opengl.so
+libgltf2-opengl.dylib
+libgltf2-opengl.dll
+libgltf2-opengl.a
+libgltf2-opengl.lib
+libgltf2-opengl-test-*
+*.exe
+*.o
+*.obj
+*.lst
