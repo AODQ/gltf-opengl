@@ -69,12 +69,12 @@ class GL_glTFObject {
     }
     // create GL_glTF buffers from glTF data
     // (this has to be ordered correctly)
+    Fill_Buff(materials,    gltf.materials);
     Fill_Buff(buffers,      gltf.buffers);
     Fill_Buff(buffer_views, gltf.buffer_views);
     Fill_Buff(accessors,    gltf.accessors);
     Fill_Buff(animations,   gltf.animations);
     Fill_Buff(images,       gltf.images);
-    Fill_Buff(materials,    gltf.materials);
     Fill_Buff(meshes,       gltf.meshes);
     Fill_Buff(nodes,        gltf.nodes);
     Fill_Buff(samplers,     gltf.samplers);
@@ -159,14 +159,21 @@ struct GL_glTFPrimitive {
 
   this ( GL_glTFObject obj, ref glTFPrimitive _gltf ) {
     gltf = &_gltf;
+
+    ShaderInfo sh_info;
+
     void Create_Buffer ( ref uint idx, glTFAttribute atr ) {
       auto accessor = gltf.RAccessor(atr);
-      if ( accessor is null ) return;
+      if ( accessor is null ) {
+        sh_info.v_indices[atr] = -1;
+        return;
+      }
       auto buffer_view = obj.RGL_glTFBufferView(accessor.buffer_view);
       buffer_view.Vertex_Attrib_Pointer(
         idx, glTFType_Info(accessor.type).count,
         GL_glTFComponentType_Info(accessor.component_type).gl_type,
         GL_FALSE, accessor.offset);
+      sh_info.v_indices[atr] = idx;
       idx += 1;
     }
     // -- generate buffers & fill vao data
@@ -178,7 +185,8 @@ struct GL_glTFPrimitive {
     has_index = gltf.Has_Index();
 
     // generate program/shaders
-    render_program = Generate_Shader(gltf);
+    sh_info.material = obj.RGL_glTFMaterial(gltf.material).gltf;
+    render_program = Generate_Shader(sh_info);
 
     // -- index buffer & misc data
     if ( has_index ) {
@@ -251,8 +259,15 @@ struct GL_glTFSkin {
 // ----- texture ---------------------------------------------------------------
 struct GL_glTFTexture {
   glTFTexture* gltf;
+  GLuint gl_texture;
   this ( GL_glTFObject obj, ref glTFTexture _gltf ) {
     gltf = &_gltf;
+    glGenTextures(1, &gl_texture);
+    glBindTexture(GL_TEXTURE_2D, gl_texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gltf.image.width, gltf.image.height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, gltf.image.raw_data.ptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
   }
 }
 // ----- texture info ----------------------------------------------------------

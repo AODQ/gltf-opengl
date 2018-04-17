@@ -2,28 +2,104 @@ module gltf2opengl.glshader;
 import derelict.opengl;
 import gltf2;
 
-GLuint Generate_Shader ( glTFPrimitive* primitive ) {
-  return Load_Shaders(q{#version 330 core
-      #extension GL_ARB_explicit_uniform_location : enable
-      layout(location = 0) in vec3 in_vertex;
-      layout(location = 1) in vec3 in_normal;
+struct ShaderInfo {
+  int[glTFAttribute] v_indices;
+  glTFMaterial* material;
+}
 
-      layout(location = 0)  uniform mat4 Model;
-      layout(location = 1) uniform mat4 View_projection;
+GLuint Generate_Shader ( ShaderInfo info ) {
+  import std.string : format;
 
-      out float frag_theta;
+  string in_vs, uni_vs, out_vs, main_vs;
+  string in_fs, uni_fs, out_fs, main_fs;
 
-      void main ( ) {
-        gl_Position = View_projection*Model*vec4(in_vertex, 1.0f);
-        frag_theta = clamp(dot(in_normal, normalize(vec3(1.0f, 3.0f, 4.0f))), 0.0f, 1.0f);
+  int vert_idx = info.v_indices[glTFAttribute.Position],
+      nor_idx  = info.v_indices[glTFAttribute.Normal];
+  // -- uniform MVP matrix
+  uni_vs ~= "layout(location = 0) uniform mat4 Model;\n";
+  uni_vs ~= "layout(location = 1) uniform mat4 View_projection;\n";
+  // -- position (gaurunteed to exist )
+  in_vs ~= "layout(location = %s) in vec3 in_vertex;\n".format(vert_idx);
+  main_vs ~= "gl_Position = View_projection*Model*vec4(in_vertex, 1.0f);\n";
+  // -- normal
+  if ( nor_idx >= 0 ) {
+    in_vs ~= "layout(location = %s) in vec3 in_nor;\n".format(nor_idx);
+    out_vs ~= "out vec3 frag_N;\n";
+    out_vs ~= "out vec3 frag_wi;\n";
+    in_fs ~= "in vec3 frag_N;\n";
+    in_fs ~= "in vec3 frag_wi;\n";
+    main_vs ~= "frag_N = in_nor;\n";
+    main_vs ~= "frag_wi = normalize(gl_Position.xyz);\n";
+    // main_vs ~= "frag_wi *= vec3(1.0f, 1.0f, 1.0f);\n";
+  }
+  // -- constants
+  uni_vs ~= "#define PI 3.14159265f\n";
+  uni_fs ~= "#define PI 3.14159265f\n";
+  // -- BRDF
+  main_fs ~= "vec3 brdf = vec3(1.0f);\n";
+  // -- material
+  import std.variant, std.conv;
+  info.material.material.visit!(
+    (glTFMaterialNil mat) {
+      if ( nor_idx >= 0 ) {
+        main_fs ~= "brdf = vec3(1.0f);";
       }
-  }, q{#version 330 core
-    in float frag_theta;
-    out vec4 colour;
-    void main() {
-      colour = vec4(vec3(1.0f)*frag_theta, 1.0f);
+    },
+    (glTFMaterialPBRMetallicRoughness mat) {
+      out_fs ~= q{
+        float GGX ( vec3 wi, vec3 H, float k ) {
+          return dot(wi, H)/(dot(wi, H)*(1.0f-k)+k);
+        }
+        float sqr(float t){return t*t;}
+      };
+      main_fs ~= q{
+        float roughness = %s, metallic = %s;
+        float alpha = sqr(roughness);
+        vec3 col = vec3(%s, %s, %s);
+        const vec3 dielectricSpecular = vec3(0.04f);
+        vec3 diff = mix(col * (1.0f - dielectricSpecular.r), vec3(0.0f),
+                        metallic);
+        vec3 F0 = mix(dielectricSpecular, col, metallic);
+        vec3 wi = -frag_wi,
+             N = frag_N,
+             wo = normalize(reflect(wi, normalize(N))),
+             H = normalize(wi+wo);
+        diff = (1.0f-F0)*(diff/PI);
+        // -- fresnel
+        brdf = F0 + (vec3(1.0f)-F0)*pow(1.0f - dot(wi, H), 5.0f);
+        // -- geometric
+        float k = roughness*sqrt(2.0f/PI);
+        brdf *= vec3(1.0f)*GGX(wi, H, k)*GGX(wo, H, k);
+        // -- distribution
+        brdf *= vec3(1.0f)*(alpha)/(PI*sqr(sqr(dot(N, H))*(alpha-1.0f)+1.0f));
+
+        brdf /= (4.0f*dot(N, wo)*min(dot(N, H), dot(N, wi)));
+        brdf = clamp(brdf, vec3(0.0f), vec3(1.0f));
+        brdf = diff+brdf;
+        // brdf = vec3(wo);
+      }.format(mat.roughness_factor, mat.metallic_factor,
+          mat.colour_factor[0], mat.colour_factor[1], mat.colour_factor[2]);
     }
-  });
+  );
+  // -- frag colour
+  import std.stdio;
+  out_fs ~= "out vec4 colour;\n";
+  main_fs ~= "colour = vec4(brdf, 1.0f);\n";
+
+  // main_fs ~= "colour = vec4(vec3(frag_wo), 1.0f);\n";
+
+  // -- build shader
+  string core_shader = q{#version 330 core
+    #extension GL_ARB_explicit_uniform_location : enable
+    %s %s %s void main() { %s }};
+
+    import std.stdio;
+  writeln(
+        core_shader.format(in_vs, uni_vs, out_vs, main_vs), "\n\n",
+                      core_shader.format(in_fs, uni_fs, out_fs, main_fs)
+  );
+  return Load_Shaders(core_shader.format(in_vs, uni_vs, out_vs, main_vs),
+                      core_shader.format(in_fs, uni_fs, out_fs, main_fs));
 }
 
 GLuint Load_Shaders(string vertex, string fragment) {
