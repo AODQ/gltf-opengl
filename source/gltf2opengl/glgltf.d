@@ -1,6 +1,7 @@
 module gltf2opengl.glgltf;
 import gltf2opengl.glutil, gltf2, gltf2opengl.glgltfenum;
 import std.stdio;
+    import std.variant : visit;
 import std.algorithm, std.array, std.range;
 /*version(glTFViewer)*/ import gl3n.linalg;
 // ----- glTF (root object) ----------------------------------------------------
@@ -52,16 +53,16 @@ class GL_glTFObject {
     // set buffer lengths
     accessors.length    = gltf.accessors.length;
     animations.length   = gltf.animations.length;
+    samplers.length     = gltf.samplers.length;
+    textures.length     = gltf.textures.length;
     buffers.length      = gltf.buffers.length;
     buffer_views.length = gltf.buffer_views.length;
     images.length       = gltf.images.length;
     materials.length    = gltf.materials.length;
     meshes.length       = gltf.meshes.length;
     nodes.length        = gltf.nodes.length;
-    samplers.length     = gltf.samplers.length;
     scenes.length       = gltf.scenes.length;
     skins.length        = gltf.skins.length;
-    textures.length     = gltf.textures.length;
 
     void Fill_Buff(T, U)(ref T[] buff, ref U[] gl) {
       import std.range, std.algorithm;
@@ -69,6 +70,7 @@ class GL_glTFObject {
     }
     // create GL_glTF buffers from glTF data
     // (this has to be ordered correctly)
+    Fill_Buff(textures,     gltf.textures);
     Fill_Buff(materials,    gltf.materials);
     Fill_Buff(buffers,      gltf.buffers);
     Fill_Buff(buffer_views, gltf.buffer_views);
@@ -80,7 +82,6 @@ class GL_glTFObject {
     Fill_Buff(samplers,     gltf.samplers);
     Fill_Buff(scenes,       gltf.scenes);
     Fill_Buff(skins,        gltf.skins);
-    Fill_Buff(textures,     gltf.textures);
   }
 }
 
@@ -146,8 +147,28 @@ struct GL_glTFImage {
 // ----- material --------------------------------------------------------------
 struct GL_glTFMaterial {
   glTFMaterial* gltf;
+  GL_glTFTexture* colour_texture;
   this ( GL_glTFObject obj, ref glTFMaterial _gltf ) {
     gltf = &_gltf;
+    gltf.material.visit!(
+      (glTFMaterialNil mat){},
+      (glTFMaterialPBRMetallicRoughness mat) {
+        // if ( mat.base_colour_texture != "" ) {
+          // colour_texture = 
+        // }
+      }
+    );
+  }
+
+  GL_glTFTexture* RPrimary_Texture ( ) {
+    return null;
+    // gltf.material.visit!(
+    //   (glTFMaterialNil mat){return null;},
+    //   (glTFMaterialPBRMetallicRoughness mat) {
+    //     if ( mat.base_colour_texture != "" )
+    //       return GL_glTF
+    //   }
+    // );
   }
 }
 // ----- mesh ------------------------------------------------------------------
@@ -182,10 +203,28 @@ struct GL_glTFPrimitive {
     uint idx = 0; // count gl vertex attrib
     Create_Buffer(idx, glTFAttribute.Position);
     Create_Buffer(idx, glTFAttribute.Normal);
+    Create_Buffer(idx, glTFAttribute.TexCoord0);
+    Create_Buffer(idx, glTFAttribute.Colour0);
     has_index = gltf.Has_Index();
 
+
     // generate program/shaders
-    sh_info.material = obj.RGL_glTFMaterial(gltf.material).gltf;
+    sh_info.material = null;
+    sh_info.has_colour_texture = false;
+    if ( gltf.material !is null ) {
+      sh_info.material = obj.RGL_glTFMaterial(gltf.material).gltf;
+      sh_info.material.material.visit!(
+        (glTFMaterialNil mat){},
+        (glTFMaterialPBRMetallicRoughness mat) {
+          if ( mat.base_colour_texture.Exists ) {
+            sh_info.has_colour_texture = true;
+            obj.RGL_glTFTexture(mat.base_colour_texture.texture).Bind(0, 10);
+          }
+        }
+      );
+    }
+    // sh_info.has_texture = obj.RGL_glTFTexture(sh_info.m
+    // -- operate on textures
     render_program = Generate_Shader(sh_info);
 
     // -- index buffer & misc data
@@ -268,6 +307,12 @@ struct GL_glTFTexture {
                  0, GL_RGBA, GL_UNSIGNED_BYTE, gltf.image.raw_data.ptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  }
+
+  void Bind ( int idx, int bind_loc ) {
+    glActiveTexture(GL_TEXTURE0 + idx);
+    glBindTexture(GL_TEXTURE_2D, gl_texture);
+    glUniform1i(bind_loc, idx);
   }
 }
 // ----- texture info ----------------------------------------------------------
