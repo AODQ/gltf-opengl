@@ -154,7 +154,7 @@ struct GL_glTFMaterial {
       (glTFMaterialNil mat){},
       (glTFMaterialPBRMetallicRoughness mat) {
         // if ( mat.base_colour_texture != "" ) {
-          // colour_texture = 
+          // colour_texture =
         // }
       }
     );
@@ -243,10 +243,9 @@ struct GL_glTFPrimitive {
   }
 
   // version(glTFViewer)
-  void Render ( ref Matrix!(float, 4, 4) view_proj ) {
+  void Render ( Matrix!(float, 4, 4) view_proj, Matrix!(float, 4, 4) model ) {
     glUseProgram(render_program);
     glBindVertexArray(render_vao);
-    Matrix!(float, 4, 4) model = Matrix!(float, 4, 4).identity;
     glUniformMatrix4fv(0, 1, GL_TRUE, model.value_ptr);
     glUniformMatrix4fv(1, 1, GL_TRUE, view_proj.value_ptr);
     if ( !has_index ) glDrawArrays(render_mode, 0, render_length);
@@ -263,15 +262,35 @@ struct GL_glTFMesh {
   }
 
   // version(glTFViewer)
-  void Render ( ref Matrix!(float, 4, 4) view_proj ) {
-    primitives.each!(i => i.Render(view_proj));
+  void Render ( Matrix!(float, 4, 4) view_proj, Matrix!(float, 4, 4) model ) {
+    primitives.each!(i => i.Render(view_proj, model));
   }
 }
 // ----- node ------------------------------------------------------------------
 struct GL_glTFNode {
+  GL_glTFObject obj;
   glTFNode* gltf;
-  this ( GL_glTFObject obj, ref glTFNode _gltf ) {
+  Matrix!(float, 4, 4) model;
+  this ( GL_glTFObject _obj, ref glTFNode _gltf ) {
+    obj = _obj;
     gltf = &_gltf;
+    model = Matrix!(float, 4, 4)(
+      gltf.matrix[0],  gltf.matrix[1],  gltf.matrix[2],  gltf.matrix[3],
+      gltf.matrix[4],  gltf.matrix[5],  gltf.matrix[6],  gltf.matrix[7],
+      gltf.matrix[8],  gltf.matrix[9],  gltf.matrix[10], gltf.matrix[11],
+      gltf.matrix[12], gltf.matrix[13], gltf.matrix[14], gltf.matrix[15],
+    );
+    // model.transpose;
+  }
+  void Render ( Matrix!(float, 4, 4) view_proj ) {
+    // view_proj = view_proj*model;
+    if ( gltf.Has_Mesh ) {
+      obj.RGL_glTFMesh(gltf.RMesh).Render(view_proj, model);
+    }
+    foreach ( child; gltf.children ) {
+      // view_proj = view_proj*model;
+      obj.RGL_glTFNode(child).Render(view_proj);
+    }
   }
 }
 // ----- sampler ---------------------------------------------------------------
