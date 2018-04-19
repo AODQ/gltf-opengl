@@ -17,14 +17,4 @@ for external usage, its primary goal is as the backend for the glTF2 opengl view
 The goal right now is to load & view all glTF2 sample models in OpenGL from
 https://github.com/KhronosGroup/glTF-Sample-Models/tree/master/2.0/
 
-The following is a list of working models with an implementation quality from * to *** when compared to their reference screenshot:
-
-    "Triangle Without Indices" ........... **
-    "Triangle" ........................... **
-    "Box" ................................ **
-    "BoxInterleaved" ..................... **
-    "Suzanne" ............................ *
-    "SciFiHelmet" ........................ *
-    
-    
-![](https://github.com/AODQ/gltf/blob/master/media/suzeanneworking.gif)
+Check Base glTF2 for more information.
