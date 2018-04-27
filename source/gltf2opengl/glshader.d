@@ -1,11 +1,12 @@
 module gltf2opengl.glshader;
+import gltf2opengl.glgltf : GL_glTFRoot;
 import derelict.opengl;
 import gltf2;
 import std.stdio;
 
 struct ShaderInfo {
   int[glTFAttribute] v_indices;
-  glTFMaterial* material;
+  GL_glTFRoot.SubrootMaterial* material;
   bool has_colour_texture;
 }
 
@@ -21,10 +22,16 @@ GLuint Generate_Shader ( ShaderInfo info ) {
       col_idx  = info.v_indices[glTFAttribute.Colour0];
   // -- uniform MVP matrix
   uni_vs ~= "layout(location = 0) uniform mat4 Model;\n";
-  uni_vs ~= "layout(location = 1) uniform mat4 View_projection;\n";
+  uni_vs ~= "layout(location = 1) uniform mat4 View;\n";
+  uni_vs ~= "layout(location = 2) uniform mat4 Perspective;\n";
   // -- position (gaurunteed to exist )
   in_vs ~= "layout(location = %s) in vec3 in_vertex;\n".format(vert_idx);
-  main_vs ~= "gl_Position = View_projection*Model*vec4(in_vertex, 1.0f);\n";
+  main_vs ~= "gl_Position = Perspective*View*Model*vec4(in_vertex, 1.0f);\n";
+  out_vs ~= "out vec3 frag_Lo;\n";
+  in_fs  ~= "in vec3 frag_Lo;\n";
+  main_vs ~= "frag_Lo = vec3(20.0f, -50.0f, 20.0f);";
+  main_vs ~= "frag_Lo = (Perspective*View*Model*vec4(frag_Lo, 1.0f)).xyz;\n";
+  main_vs ~= "frag_Lo = normalize(frag_Lo - gl_Position.xyz);";
   // -- texcoord0 coordinates
   if ( tc0_idx >= 0 ) {
     in_vs ~= "layout(location = %s) in vec2 in_texcoord0;\n".format(tc0_idx);
@@ -46,8 +53,8 @@ GLuint Generate_Shader ( ShaderInfo info ) {
     out_vs ~= "out vec3 frag_wi;\n";
     in_fs ~= "in vec3 frag_N;\n";
     in_fs ~= "in vec3 frag_wi;\n";
-    main_vs ~= "frag_N = in_nor;\n";
-    main_vs ~= "frag_wi = normalize(gl_Position.xyz);\n";
+    main_vs ~= "frag_N = (View*Model*vec4(in_nor, 0.0f)).xyz;\n";
+    main_vs ~= "frag_wi = normalize(-gl_Position.xyz);\n";
     // main_vs ~= "frag_wi *= vec3(1.0f, 1.0f, 1.0f);\n";
   }
   // -- constants
@@ -57,7 +64,7 @@ GLuint Generate_Shader ( ShaderInfo info ) {
   main_fs ~= "vec3 brdf = vec3(1.0f);\n";
   // -- material
   import std.variant, std.conv;
-  if ( info.material !is null ) info.material.material.visit!(
+  if ( info.material !is null ) info.material.gltf.material.visit!(
     (glTFMaterialNil mat) {
       if ( nor_idx >= 0 ) {
         main_fs ~= "brdf = vec3(1.0f);";
@@ -87,9 +94,9 @@ GLuint Generate_Shader ( ShaderInfo info ) {
         vec3 diff = mix(col * (1.0f - dielectricSpecular.r), col*0.5f,
                         metallic);
         vec3 F0 = mix(dielectricSpecular, col, metallic);
-        vec3 wi = -frag_wi,
+        vec3 wi = frag_wi,
              N = frag_N,
-             wo = normalize(reflect(wi, normalize(N))),
+             wo = frag_Lo,
              H = normalize(wi+wo);
         diff = (1.0f-F0)*(diff/PI);
         // -- fresnel
@@ -102,7 +109,9 @@ GLuint Generate_Shader ( ShaderInfo info ) {
 
         brdf /= (4.0f*dot(N, wo)*min(dot(N, H), dot(N, wi)));
         brdf = clamp(brdf, vec3(0.0f), vec3(1.0f));
-        brdf = col;
+        brdf *= clamp(dot(N, wo), 0.0f, 1.0f);
+        brdf = col + brdf;
+        // brdf = normalize(reflect(wi, normalize(N)));
         // brdf = vec3(wo);
       }.format(mat.roughness_factor, mat.metallic_factor);
     }
