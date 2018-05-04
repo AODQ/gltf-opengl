@@ -29,9 +29,9 @@ GLuint Generate_Shader ( ShaderInfo info ) {
   main_vs ~= "gl_Position = Perspective*View*Model*vec4(in_vertex, 1.0f);\n";
   out_vs ~= "out vec3 frag_Lo;\n";
   in_fs  ~= "in vec3 frag_Lo;\n";
-  main_vs ~= "frag_Lo = vec3(20.0f, -50.0f, 20.0f);";
-  main_vs ~= "frag_Lo = (Perspective*View*Model*vec4(frag_Lo, 1.0f)).xyz;\n";
-  main_vs ~= "frag_Lo = normalize(frag_Lo - gl_Position.xyz);";
+  main_vs ~= "frag_Lo = vec3(20.0f, 50.0f, 20.0f);";
+  main_vs ~= "frag_Lo = (vec4(frag_Lo, 1.0f)).xyz;\n";
+  main_vs ~= "frag_Lo = normalize(frag_Lo - in_vertex.xyz);";
   // -- texcoord0 coordinates
   if ( tc0_idx >= 0 ) {
     in_vs ~= "layout(location = %s) in vec2 in_texcoord0;\n".format(tc0_idx);
@@ -102,15 +102,15 @@ GLuint Generate_Shader ( ShaderInfo info ) {
         // -- fresnel
         brdf = F0 + (vec3(1.0f)-F0)*pow(1.0f - dot(wi, H), 5.0f);
         // -- geometric
-        float k = roughness*sqrt(2.0f/PI);
-        brdf *= vec3(1.0f)*GGX(wi, H, k)*GGX(wo, H, k);
+        float k = alpha*sqrt(2.0f/PI);
+        // brdf *= vec3(1.0f)*GGX(wi, H, k)*GGX(wo, H, k);
         // -- distribution
         brdf *= vec3(1.0f)*(alpha)/(PI*sqr(sqr(dot(N, H))*(alpha-1.0f)+1.0f));
 
-        brdf /= (4.0f*dot(N, wo)*min(dot(N, H), dot(N, wi)));
+        // brdf /= (4.0f*dot(N, wo));
         brdf = clamp(brdf, vec3(0.0f), vec3(1.0f));
-        brdf *= clamp(dot(N, wo), 0.0f, 1.0f);
-        brdf = col + brdf;
+        // brdf *= clamp(dot(N, wo), 0.0f, 1.0f);
+        brdf = col*(1.0f/PI) + brdf*col;
         // brdf = normalize(reflect(wi, normalize(N)));
         // brdf = vec3(wo);
       }.format(mat.roughness_factor, mat.metallic_factor);

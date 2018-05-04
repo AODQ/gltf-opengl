@@ -27,8 +27,8 @@ struct GL_glTF {
       if ( target == glTFBufferViewTarget.NonGPU ) return;
       buffer = GL_glTFCreate_Buffer(target);
       stride = gltf.stride;
-      glBufferData(target, gltf.length, gltf.buffer.raw_data.ptr + gltf.offset,
-                   GL_STATIC_DRAW);
+      auto ptr = obj.buffers[gltf.buffer].gltf.raw_data.ptr + gltf.offset;
+      glBufferData(target, gltf.length, ptr, GL_STATIC_DRAW);
     }
 
     void Bind ( ) { glBindBuffer(target, buffer); }
@@ -38,6 +38,31 @@ struct GL_glTF {
       glEnableVertexAttribArray(index);
       glVertexAttribPointer(index, size, type, normalized, stride,
                             cast(void*)offset);
+    }
+  }
+  // ----- cameras -------------------------------------------------------------
+  struct Camera {
+    float4x4 projection_matrix;
+
+    this ( uint idx, Root obj ) {
+      import std.math : tan;
+      auto gltf = &obj.cameras[idx].gltf;
+      projection_matrix = gltf.camera.visit!(
+        (glTFCameraPerspective p) {
+          float a = p.aspect_ratio,
+                y = p.yfov, n = p.znear, f = p.zfar;
+          float tanfov = tan(0.5f*y);
+          return float4x4(
+            1.0f/(a*tanfov), 0f,        0f,          0f,
+            0f,              1f/tanfov, 0f,          0f,
+            0f,              0f,        (f+n)/(n-f), (2f*f*n)/(n-f),
+            0f,              0f,        -1f,         0f
+          );
+        },
+        (glTFCameraOrthographic o) {
+          return float4x4(-1.0f);
+        }
+      );
     }
   }
   // ----- mesh ----------------------------------------------------------------
@@ -84,8 +109,6 @@ struct GL_glTF {
           (glTFMaterialNil mat){},
           (glTFMaterialPBRMetallicRoughness mat) {
             if ( mat.base_colour_texture.Exists ) {
-              writeln("::", mat.base_colour_texture.texture);
-              writeln("::", obj.textures);
               sh_info.has_colour_texture = true;
               obj.textures[mat.base_colour_texture.texture].gl.Bind(0, 10);
             }
@@ -137,30 +160,55 @@ struct GL_glTF {
   }
   // ----- node ----------------------------------------------------------------
   struct Node {
-    Matrix!(float, 4, 4) model;
     uint index;
 
     this ( uint idx, Root obj ) {
       index = idx;
-      auto gltf = &obj.nodes[idx].gltf;
-      model = Matrix!(float, 4, 4)(
-        gltf.matrix[0],  gltf.matrix[1],  gltf.matrix[2],  gltf.matrix[3],
-        gltf.matrix[4],  gltf.matrix[5],  gltf.matrix[6],  gltf.matrix[7],
-        gltf.matrix[8],  gltf.matrix[9],  gltf.matrix[10], gltf.matrix[11],
-        gltf.matrix[12], gltf.matrix[13], gltf.matrix[14], gltf.matrix[15],
-      );
-      // model.transpose;
     }
-    void Render ( Root obj, float4x4 view_proj, float4x4 persp_proj ) {
+
+    float4x4 RModel_Matrix ( Root obj ) {
       auto gltf = &obj.nodes[index].gltf;
-      // view_proj = view_proj*model;
+      return gltf.transform.visit!(
+        (glTFMatrix matrix) { return float4x4(matrix.data); },
+        (glTFTRSMatrix matrix) {
+          float4x4 translation = float4x4(
+            1f, 0f, 0f, matrix.translation[0],
+            0f, 1f, 0f, matrix.translation[1],
+            0f, 0f, 1f, matrix.translation[2],
+            0f, 0f, 0f, 1f
+          );
+          float[] mr = matrix.rotation;
+          float4x4 rotation = Quaternion!float(mr[0], mr[1], mr[2], mr[3])
+                              .to_matrix!(4, 4);
+          float[] ms = matrix.scale;
+          float4x4 scale = float4x4.scaling(ms[0], ms[1], ms[2]);
+          return translation * rotation * scale;
+        }
+      );
+    }
+
+    void Render ( Root obj, float4x4 view_proj, float4x4 persp_proj,
+                            float4x4 model_base ) {
+      auto gltf = &obj.nodes[index].gltf;
+      float4x4 model = RModel_Matrix(obj);
+      model_base = model_base*model;
       if ( gltf.Has_Mesh ) {
-        obj.meshes[gltf.mesh].gl.Render(view_proj, persp_proj, model);
+        obj.meshes[gltf.mesh].gl.Render(view_proj, persp_proj, model_base);
       }
       foreach ( child; gltf.children ) {
-        // view_proj = view_proj*model;
-        obj.nodes[child].gl.Render(obj, view_proj, persp_proj);
+        obj.nodes[child].gl.Render(obj, view_proj, persp_proj, model_base);
       }
+    }
+
+    float4x4 RCascaded_Model ( Root obj ) {
+      auto top = &obj.nodes[index];
+      float4x4 model = RModel_Matrix(obj);
+      Matrix!(float, 4, 4) tmodel = model;
+      while ( top.Has_Node_Parent ) {
+        top = &obj.nodes[top.node_parent];
+        tmodel = top.gl.RModel_Matrix(obj) * tmodel;
+      }
+      return tmodel;
     }
   }
   // --- sampler ---------------------------------------------------------------
