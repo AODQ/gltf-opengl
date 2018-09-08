@@ -24,6 +24,7 @@ GLuint Generate_Shader ( ShaderInfo info ) {
   uni_vs ~= "layout(location = 0) uniform mat4 Model;\n";
   uni_vs ~= "layout(location = 1) uniform mat4 View;\n";
   uni_vs ~= "layout(location = 2) uniform mat4 Perspective;\n";
+  uni_vs ~= "layout(location = 3) uniform float Delta;\n";
   // -- position (gaurunteed to exist )
   in_vs ~= "layout(location = %s) in vec3 in_vertex;\n".format(vert_idx);
   main_vs ~= "gl_Position = Perspective*View*Model*vec4(in_vertex, 1.0f);\n";
@@ -46,15 +47,23 @@ GLuint Generate_Shader ( ShaderInfo info ) {
     in_fs ~= "in vec3 frag_colour0;\n";
     main_vs ~= "frag_colour0 = in_colour0;\n";
   }
+
+  // wi
+  out_vs ~= "out vec3 frag_wi;\n";
+  in_fs ~= "in vec3 frag_wi;\n";
+  main_vs ~= "frag_wi = normalize(-gl_Position.xyz);\n";
+
+  // vertex
+  out_vs ~= "out vec3 frag_position;\n";
+  in_fs ~= "in vec3 frag_position;\n";
+  main_vs ~= "frag_position = in_vertex;\n";
+
   // -- normal
   if ( nor_idx >= 0 ) {
     in_vs ~= "layout(location = %s) in vec3 in_nor;\n".format(nor_idx);
     out_vs ~= "out vec3 frag_N;\n";
-    out_vs ~= "out vec3 frag_wi;\n";
     in_fs ~= "in vec3 frag_N;\n";
-    in_fs ~= "in vec3 frag_wi;\n";
     main_vs ~= "frag_N = (View*Model*vec4(in_nor, 0.0f)).xyz;\n";
-    main_vs ~= "frag_wi = normalize(-gl_Position.xyz);\n";
     // main_vs ~= "frag_wi *= vec3(1.0f, 1.0f, 1.0f);\n";
   }
   // -- constants
@@ -121,20 +130,21 @@ GLuint Generate_Shader ( ShaderInfo info ) {
   out_fs ~= "out vec4 colour;\n";
   main_fs ~= "colour = vec4(brdf, 1.0f);\n";
 
-  // main_fs ~= "colour = vec4(vec3(frag_wo), 1.0f);\n";
+  // main_fs ~= "colour = vec4(vec3(frag_wi), 1.0f);\n";
+  main_fs ~= "colour = vec4(vec3(frag_position), 1.0f);\n";
 
   // -- build shader
-  string core_shader = q{#version 330 core
+  string core_shader = `#version 330 core
     #extension GL_ARB_explicit_uniform_location : enable
-    %s %s %s void main() { %s }};
+    %s %s %s void main() { %s }`;
 
   import std.stdio;
-  writeln("--------------------------------");
-  writeln(
-        core_shader.format(in_vs, uni_vs, out_vs, main_vs), "\n\n",
-                      core_shader.format(in_fs, uni_fs, out_fs, main_fs)
-  );
-  writeln("--------------------------------");
+  // writeln("--------------------------------");
+  // writeln(
+  //       core_shader.format(in_vs, uni_vs, out_vs, main_vs), "\n\n",
+  //                     core_shader.format(in_fs, uni_fs, out_fs, main_fs)
+  // );
+  // writeln("--------------------------------");
   return Load_Shaders(core_shader.format(in_vs, uni_vs, out_vs, main_vs),
                       core_shader.format(in_fs, uni_fs, out_fs, main_fs));
 }

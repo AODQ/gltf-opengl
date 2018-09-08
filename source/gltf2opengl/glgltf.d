@@ -10,35 +10,109 @@ private alias Root = GL_glTFRoot;
 private alias float4x4 = Matrix!(float, 4, 4);
 
 struct GL_glTF {
-  struct Accessor  { this ( uint idx, Root obj) {} }
-  struct Animation { this ( uint idx, Root obj) {} }
   struct Buffer    { this ( uint idx, Root obj) {} }
   struct Image     { this ( uint idx, Root obj) {} }
   struct Material  { this ( uint idx, Root obj) {} }
+  // ----- accessor ------------------------------------------------------------
+  // TODO probably have two versions of this, one for sparse that allocates its
+  //  own. might have to change how glTF works fundamentally.
+  // either.. Accessor => BufferView => Buffer => Data
+  // or SparseAccessor => Buffer => Data
+  struct Accessor {
+    GLuint gl_buffer;
+    GLuint gl_target;
+    uint index;
+    uint stride;
+
+    this ( uint idx, Root obj) {
+      index = idx;
+      auto gltf = &obj.accessors[idx].gltf;
+      auto buffer_view = &obj.buffer_views[gltf.buffer_view];
+      gl_target = buffer_view.gl.target;
+      stride = buffer_view.gl.stride;
+      if ( gl_target == glTFBufferViewTarget.NonGPU ) return;
+      glGenBuffers(1, &gl_buffer);
+      glBindBuffer(gl_target, gl_buffer);
+
+      // TODO use slices that don't copy
+      auto ptr = buffer_view.gltf.BufferPtrWithAccessor(obj, gltf);
+
+      auto component_len = glTFComponentType_Info(gltf.component_type).size;
+      auto type_len = glTFType_Info(gltf.type).count;
+      auto element_size = component_len*type_len;
+      int length =  gltf.count * element_size;
+
+      // CHECK floats must not ben NaN/inf
+      if ( gltf.component_type == glTFComponentType.Float ) {
+        foreach ( fl; cast(float[])ptr[0 .. length] ) {
+          assert ( !(fl == float.nan), "float component type is of type NaN");
+          assert ( !(fl == float.infinity || fl == -float.infinity),
+                   "float component typei s of type infinity");
+          }
+      }
+
+      // CHECK each offset (accessor, accessor+bufferview) must be a multiple of component_type
+      assert((gltf.offset) % component_len == 0,
+             "accessor offset must be a multiple of componentType");
+      assert((gltf.offset+buffer_view.gltf.offset) % component_len == 0,
+             "accessor + buffer_view offset must be a multiple of componentType");
+
+      // CHECK byteStride is a multiple of accessor type
+      assert(stride % component_len == 0, "byteStride must be a multiple of componentType");
+
+      // CHECK each accessor must fit its bufferView,
+      assert(gltf.offset + stride*(gltf.count-1) + element_size <= buffer_view.gltf.length,
+             "Accessor must fit into bufferView");
+
+      // CHECK each element that will be applied to vertex attribute must be multiple of 4
+      assert(gltf.byte_offset % 4 == 0, "Accessor byte offset must be a multiple of 4");
+      assert(stride % 4 == 0,           "Accessor byte stride must be a multiple of 4");
+
+      // TODO support MAT2 1 byte, MAT3 1 byte and MAT3 2 byte
+      //      (4 byte alignment issue)
+
+
+      glBufferData(gl_target, length, ptr, GL_STATIC_DRAW);
+    }
+
+    void Bind ( ) { glBindBuffer(gl_target, gl_buffer); }
+    void ApplyVertexAttribute(GLuint index, GLint size, GLenum type,
+                              GLboolean normalized, uint offset) {
+      Bind();
+      glEnableVertexAttribArray(index);
+      glVertexAttribPointer(index, size, type, normalized, stride, cast(void*)offset);
+    }
+  }
+  // ----- animation -----------------------------------------------------------
+  struct Animation {
+    uint index;
+
+    this ( uint idx, Root obj ) {
+      index = idx;
+    }
+
+    void PostInitialize ( Root obj ) {
+      auto gltf = &obj.animations[index].gltf;
+      // iterate through channels
+      foreach ( ref channel; gltf.channels ) {
+        // auto sampler = &gltf.samplers[channel.sampler];
+        // auto targetNode = &gltf.nodes[channel.target.node];
+        // targetNode.SetAnimation
+      }
+    }
+  }
   // ----- buffer view ---------------------------------------------------------
   struct BufferView {
-    GLuint buffer;
     GLenum target;
     uint stride;
 
     this ( uint idx, Root obj ) {
       auto gltf = &obj.buffer_views[idx].gltf;
       target = GL_glTFBufferViewTarget_Info(gltf.target).gl_target;
-      if ( target == glTFBufferViewTarget.NonGPU ) return;
-      buffer = GL_glTFCreate_Buffer(target);
       stride = gltf.stride;
-      auto ptr = obj.buffers[gltf.buffer].gltf.raw_data.ptr + gltf.offset;
-      glBufferData(target, gltf.length, ptr, GL_STATIC_DRAW);
     }
 
-    void Bind ( ) { glBindBuffer(target, buffer); }
-    void Vertex_Attrib_Pointer(GLuint index, GLint size, GLenum type,
-                               GLboolean normalized, uint offset) {
-      glBindBuffer(target, buffer);
-      glEnableVertexAttribArray(index);
-      glVertexAttribPointer(index, size, type, normalized, stride,
-                            cast(void*)offset);
-    }
+    void Bind ( GLuint gl_buffer ) { glBindBuffer(target, gl_buffer); }
   }
   // ----- cameras -------------------------------------------------------------
   struct Camera {
@@ -82,7 +156,7 @@ struct GL_glTF {
           return;
         }
         auto buffer_view = &obj.buffer_views[accessor.buffer_view];
-        buffer_view.gl.Vertex_Attrib_Pointer(
+        obj.accessors[accessor.buffer_index].gl.ApplyVertexAttribute(
           idx, glTFType_Info(accessor.type).count,
           GL_glTFComponentType_Info(accessor.component_type).gl_type,
           GL_FALSE, accessor.offset);
@@ -121,26 +195,26 @@ struct GL_glTF {
 
       // -- index buffer & misc data
       if ( has_index ) {
-        auto acc = gltf.RAccessor(glTFAttribute.Index);
-        render_gl_enum = GL_glTFComponentType_Info(acc.component_type).gl_type;
-        render_length = acc.count;
-        obj.buffer_views[acc.buffer_view].gl.Bind();
+        auto index_accessor = gltf.RAccessor(glTFAttribute.Index);
+        render_gl_enum = GL_glTFComponentType_Info(index_accessor.component_type).gl_type;
+        render_length = index_accessor.count;
+        obj.accessors[index_accessor.buffer_index].gl.Bind();
       } else {
         render_length = gltf.RAccessor(glTFAttribute.Position).count;
-      }
-      render_mode = GL_glTFMode_Info(gltf.mode).gl_mode;
+      } render_mode = GL_glTFMode_Info(gltf.mode).gl_mode;
       glBindVertexArray(0);
       foreach ( i; 0 .. idx )
         glDisableVertexAttribArray(i);
     }
 
     // version(glTFViewer)
-    void Render ( float4x4 view_proj, float4x4 persp_proj, float4x4 model ) {
+    void Render ( float4x4 view_proj, float4x4 persp_proj, float4x4 model) {
       glUseProgram(render_program);
       glBindVertexArray(render_vao);
       glUniformMatrix4fv(0, 1, GL_TRUE, model.value_ptr);
       glUniformMatrix4fv(1, 1, GL_TRUE, view_proj.value_ptr);
       glUniformMatrix4fv(2, 1, GL_TRUE, persp_proj.value_ptr);
+      // glUniform1f(3, delta);
       if ( !has_index ) glDrawArrays(render_mode, 0, render_length);
       else glDrawElements(render_mode, render_length, render_gl_enum, null);
     }
@@ -240,7 +314,7 @@ struct GL_glTF {
     void Bind ( int idx, int bind_loc ) {
       glActiveTexture(GL_TEXTURE0 + idx);
       glBindTexture(GL_TEXTURE_2D, gl_texture);
-      glUniform1i(bind_loc, idx);
+      // glUniform1i(bind_loc, idx);
     }
   }
   // ----- texture info --------------------------------------------------------
